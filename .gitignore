@@ -1,0 +1,10 @@
+*~
+*.bak
+*.so
+*.a
+*.lib
+*.dll
+*.dylib
+*.o
+.idea
+go.sum
