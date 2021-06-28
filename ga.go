@@ -2,22 +2,29 @@ package ga
 
 import (
 	"math/rand"
+	"runtime"
 	"sort"
+	"sync"
+	"time"
 )
 
 // An Individual is the basic genome/sample/... that is being evolved
 type Individual interface {
 	Clone() Individual
-	Mutate() Individual
+	Mutate(r *rand.Rand) Individual
 }
 
 // Generators create new Individuals.
 type Generator interface {
 	Generate() Individual
-	Evolve(a, b Individual) Individual
+	Evolve(a, b Individual, r *rand.Rand) Individual
 }
 
 type Fitness func(Individual) float32
+
+type FitnessGenerator interface {
+	Generate() Fitness
+}
 
 type gradedIndividual struct {
 	individual Individual
@@ -44,29 +51,58 @@ func (gi *gradedIndividualSort) Swap(i, j int) {
 
 // The Population is a collection of Individuals that is evolved to meet the fitness function
 type Population struct {
-	individuals []gradedIndividual
-	generator   Generator
-	fitness     Fitness
+	individuals      []gradedIndividual
+	generator        Generator
+	fitnessGenerator FitnessGenerator
+}
+
+type singleFitness struct {
+	f Fitness
+}
+
+func (sf *singleFitness) Generate() Fitness {
+	return sf.f
 }
 
 // Create a new population
 func NewPopulation(generator Generator, size int, f Fitness) *Population {
+	return NewPopulationFG(generator, size, &singleFitness{f: f})
+}
+
+func NewPopulationFG(generator Generator, size int, fg FitnessGenerator) *Population {
 	individuals := make([]gradedIndividual, size, size)
 	for i := 0; i < size; i++ {
 		individuals[i] = gradedIndividual{individual: generator.Generate()}
 	}
-	return &Population{individuals: individuals, generator: generator, fitness: f}
+	return &Population{individuals: individuals, generator: generator, fitnessGenerator: fg}
 }
 
 // Test the population against the fitness function
 func (p *Population) Test() {
-	for i := range p.individuals {
-		p.individuals[i].fitness = p.fitness(p.individuals[i].individual)
+	cpus := runtime.NumCPU()
+	wg := sync.WaitGroup{}
+	wg.Add(cpus)
+	stride := len(p.individuals) / cpus
+	i := 0
+	for curCpu := 0; curCpu < cpus; curCpu++ {
+
+		go func(idx, stride int, f Fitness) {
+			defer wg.Done()
+			end := idx + stride
+			if end > len(p.individuals) {
+				end = len(p.individuals)
+			}
+			for ; idx < end; idx++ {
+				p.individuals[idx].fitness = f(p.individuals[idx].individual)
+			}
+		}(i, stride, p.fitnessGenerator.Generate())
 	}
+	wg.Wait()
 	sort.Sort(&gradedIndividualSort{p.individuals})
 }
 
 func (p *Population) Evolve() *Population {
+
 	children := make([]gradedIndividual, len(p.individuals), len(p.individuals))
 
 	remaining := len(p.individuals)
@@ -75,40 +111,65 @@ func (p *Population) Evolve() *Population {
 	if copyCount > remaining {
 		copyCount = remaining
 	}
-	i := 0
-	for ; i < copyCount; i++ {
-		children[i].individual = p.individuals[i].individual.Clone()
-	}
-	remaining -= copyCount
-	// generate 10% new population
-	for ; remaining > 0 && copyCount > 0; i++ {
-		remaining--
-		copyCount--
-
-		children[i].individual = p.generator.Generate()
-	}
-	// mutate or evolve the rest
-	mutate := true
-	for ; remaining > 0; i++ {
-		remaining--
-
-		pIndex := rand.Intn(len(p.individuals))
-		if mutate {
-			children[i].individual = p.individuals[pIndex].individual.Mutate()
-		} else {
-			pIndex2 := pIndex
-			for pIndex2 == pIndex {
-				pIndex = rand.Intn(len(p.individuals))
-			}
-			children[i].individual = p.generator.Evolve(p.individuals[pIndex].individual, p.individuals[pIndex2].individual)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func(count int) {
+		defer wg.Done()
+		for i := 0; i < count; i++ {
+			children[i].individual = p.individuals[i].individual.Clone()
 		}
-		mutate = !mutate
+	}(copyCount)
+	remaining -= copyCount
+	i := copyCount
+	// generate 10% new population
+	newPopCount := copyCount
+	if newPopCount > remaining {
+		newPopCount = remaining
+	}
+	wg.Add(1)
+	go func(start, count int) {
+		defer wg.Done()
+		for offset := 0; offset < count; offset++ {
+			children[start+offset].individual = p.generator.Generate()
+		}
+	}(i, newPopCount)
+	remaining -= newPopCount
+	i += newPopCount
+	// mutate or evolve the rest
+
+	cpus := runtime.NumCPU()
+	if cpus > remaining {
+		cpus = remaining
+	}
+	stride := cpus
+	for cpu := 0; cpu < cpus; cpu++ {
+		wg.Add(1)
+		go func(start, max, stride int) {
+			defer wg.Done()
+			r := rand.New(rand.NewSource(time.Now().UnixNano()))
+			pIndex := r.Intn(len(p.individuals))
+
+			for cur := start; cur < max; cur += stride {
+				mutate := (cur % 2) == 0
+				if mutate {
+					children[cur].individual = p.individuals[pIndex].individual.Mutate(r)
+				} else {
+					pIndex2 := pIndex
+					for pIndex2 == pIndex {
+						pIndex = r.Intn(len(p.individuals))
+					}
+					children[cur].individual = p.generator.Evolve(p.individuals[pIndex].individual, p.individuals[pIndex2].individual, r)
+				}
+			}
+		}(i, len(children), stride)
+		i++
 	}
 
+	wg.Wait()
 	return &Population{
-		individuals: children,
-		generator:   p.generator,
-		fitness:     p.fitness,
+		individuals:      children,
+		generator:        p.generator,
+		fitnessGenerator: p.fitnessGenerator,
 	}
 }
 

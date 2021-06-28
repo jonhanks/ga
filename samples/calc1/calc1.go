@@ -1,36 +1,45 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/jonhanks/ga"
 	"github.com/jonhanks/ga/svm"
+	"log"
 	"math"
 	"math/rand"
+	"os"
+	"runtime/pprof"
 	"strings"
 	"time"
 )
 
 type Generator struct {
+	r *rand.Rand
 }
 
-func generateOp() svm.OpCode {
-	return svm.OpCode{Code: byte(rand.Intn(svm.OpAbort + 1)),
-		Literal: rand.Int31n(100)}
+func generateOp(r *rand.Rand) svm.OpCode {
+	return svm.OpCode{Code: byte(r.Intn(svm.OpAbort + 1)),
+		Literal: r.Int31n(5)}
+}
+
+func NewGenerator() *Generator {
+	return &Generator{r: rand.New(rand.NewSource(time.Now().UnixNano()))}
 }
 
 func (g *Generator) Generate() ga.Individual {
-	l := 5 + rand.Intn(20)
+	l := 5 + g.r.Intn(20)
 	ops := make([]svm.OpCode, l, l)
 	for i := 0; i < l; i++ {
-		ops[i] = generateOp()
+		ops[i] = generateOp(g.r)
 	}
 	return &Individual{ops: ops}
 }
 
-func (g *Generator) Evolve(a, b ga.Individual) ga.Individual {
+func (g *Generator) Evolve(a, b ga.Individual, r *rand.Rand) ga.Individual {
 	_ = b
 	ind := a.(*Individual)
-	return ind.Mutate()
+	return ind.Mutate(r)
 }
 
 type Individual struct {
@@ -55,8 +64,8 @@ func (i *Individual) Clone() ga.Individual {
 	return &Individual{ops: ops}
 }
 
-func (i *Individual) Mutate() ga.Individual {
-	action := rand.Intn(3)
+func (i *Individual) Mutate(r *rand.Rand) ga.Individual {
+	action := r.Intn(3)
 	var ops []svm.OpCode
 	l := len(i.ops)
 	if l <= 2 && action == 1 {
@@ -66,45 +75,53 @@ func (i *Individual) Mutate() ga.Individual {
 	case 0:
 		ops = make([]svm.OpCode, l, l)
 		copy(ops, i.ops)
-		idx := rand.Intn(l)
-		ops[idx] = generateOp()
+		idx := r.Intn(l)
+		ops[idx] = generateOp(r)
 	case 1:
-		ops = make([]svm.OpCode, 0, l-1)
-		splitPoint := rand.Intn(l)
-		ops = append(ops, i.ops[0:splitPoint]...)
-		ops = append(ops, i.ops[splitPoint+1:]...)
+		ops = make([]svm.OpCode, l-1, l-1)
+		splitPoint := r.Intn(l)
+		copy(ops[0:splitPoint], i.ops[0:splitPoint])
+		copy(ops[splitPoint:], i.ops[splitPoint+1:])
+		//ops = append(ops, i.ops[0:splitPoint]...)
+		//ops = append(ops, i.ops[splitPoint+1:]...)
 	case 2:
-		ops = make([]svm.OpCode, 0, l+1)
-		ops = append(ops, i.ops...)
-		ops = append(ops, generateOp())
+		ops = make([]svm.OpCode, l+1, l+1)
+		copy(ops[0:l], i.ops)
+		ops[l] = generateOp(r)
+		//ops = append(ops, i.ops...)
+		//ops = append(ops, generateOp(r))
 	}
 	return &Individual{ops: ops}
 }
 
-func getVal() int32 {
+func getVal(r *rand.Rand) int32 {
 	for {
-		val := int32(rand.Intn(10000))
+		val := int32(r.Intn(10000))
 		if val != 0 {
 			return val
 		}
 	}
 }
 
-func Fitness() ga.Fitness {
+type FitnessGenerator struct {
+}
+
+func (fg *FitnessGenerator) Generate() ga.Fitness {
 	vm := svm.NewSVM(100, 100)
 
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return func(individual ga.Individual) float32 {
 		ind := individual.(*Individual)
 		vm.ResetState()
-		a := getVal()
-		b := getVal()
-		c := getVal()
+		a := getVal(r)
+		b := getVal(r)
+		c := getVal(r)
 		expected := float32(a + c)
 		vm.PokeMem(0, a)
 		vm.PokeMem(1, b)
 		vm.PokeMem(2, c)
 		exitType := vm.ExecuteProgram(ind.ops, 25)
-		val := float32(vm.PeekMem(33))
+		val := float32(vm.PeekMem(3))
 		var modifier float32
 		if exitType == svm.ExitOnAbort {
 			modifier = 1.0
@@ -129,17 +146,31 @@ func Fitness() ga.Fitness {
 }
 
 func main() {
+	cpuProfilePath := flag.String("cpu-profile", "", "path to cpu profile, empty is none")
+	flag.Parse()
 	const matchLevel = 100
 	seed := time.Now().Unix()
 	_ = seed
 	rand.Seed(seed)
 
-	population := ga.NewPopulation(&Generator{}, 10000, Fitness())
+	if *cpuProfilePath != "" {
+		f, err := os.Create(*cpuProfilePath)
+		if err != nil {
+			log.Fatal("could not create the cpu profile file, ", err)
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal("could not start the cpu profiler, ", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
+	population := ga.NewPopulationFG(NewGenerator(), 1000000, &FitnessGenerator{})
 	needMatches := matchLevel
 
 	var bestIndividual ga.Individual
 
-	for generation := 0; generation < 10000 && needMatches > 0; generation++ {
+	for generation := 0; generation < 1000 && needMatches > 0; generation++ {
 		population.Test()
 
 		fmt.Printf("Generation %v need %d more consecutive perfect scores\n", generation, needMatches)

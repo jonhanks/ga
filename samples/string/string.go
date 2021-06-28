@@ -21,12 +21,12 @@ func (sg *Generator) Generate() ga.Individual {
 	return &ind
 }
 
-func (sg *Generator) Evolve(a, b ga.Individual) ga.Individual {
+func (sg *Generator) Evolve(a, b ga.Individual, r *rand.Rand) ga.Individual {
 	aInd := a.(*Individual)
 	bInd := b.(*Individual)
 	newInd := &Individual{}
 
-	splitPoint := rand.Intn(10)
+	splitPoint := r.Intn(10)
 	i := 0
 	for ; i < splitPoint; i++ {
 		newInd.Genes[i] = aInd.Genes[i]
@@ -45,10 +45,10 @@ func (ind *Individual) Clone() ga.Individual {
 	return &Individual{Genes: ind.Genes}
 }
 
-func (ind *Individual) Mutate() ga.Individual {
-	i := rand.Intn(10)
+func (ind *Individual) Mutate(r *rand.Rand) ga.Individual {
+	i := r.Intn(10)
 	newGenes := ind.Genes
-	newGenes[i] = byte('a') + byte(rand.Intn(26))
+	newGenes[i] = byte('a') + byte(r.Intn(26))
 	return &Individual{Genes: newGenes}
 }
 
