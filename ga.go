@@ -81,11 +81,10 @@ func NewPopulationFG(generator Generator, size int, fg FitnessGenerator) *Popula
 func (p *Population) Test() {
 	cpus := runtime.NumCPU()
 	wg := sync.WaitGroup{}
-	wg.Add(cpus)
 	stride := len(p.individuals) / cpus
-	i := 0
-	for curCpu := 0; curCpu < cpus; curCpu++ {
 
+	for curCpu := 0; curCpu < cpus; curCpu++ {
+		wg.Add(1)
 		go func(idx, stride int, f Fitness) {
 			defer wg.Done()
 			end := idx + stride
@@ -95,7 +94,7 @@ func (p *Population) Test() {
 			for ; idx < end; idx++ {
 				p.individuals[idx].fitness = f(p.individuals[idx].individual)
 			}
-		}(i, stride, p.fitnessGenerator.Generate())
+		}(curCpu*stride, stride, p.fitnessGenerator.Generate())
 	}
 	wg.Wait()
 	sort.Sort(&gradedIndividualSort{p.individuals})
