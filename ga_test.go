@@ -13,10 +13,10 @@ func (d *dummyIndividual) Clone() Individual {
 	return &dummyIndividual{value: d.value}
 }
 
-func (d *dummyIndividual) Mutate() Individual {
+func (d *dummyIndividual) Mutate(r *rand.Rand) Individual {
 	newVal := d.value
 	for newVal == d.value {
-		newVal = rand.Float32()
+		newVal = r.Float32()
 	}
 	return &dummyIndividual{value: newVal}
 }
@@ -28,7 +28,7 @@ func (d dummyGenerator) Generate() Individual {
 	return &dummyIndividual{value: rand.Float32()}
 }
 
-func (d dummyGenerator) Evolve(a, b Individual) Individual {
+func (d dummyGenerator) Evolve(a, b Individual, r *rand.Rand) Individual {
 	parentA := a.(*dummyIndividual)
 	parentB := b.(*dummyIndividual)
 	return &dummyIndividual{value: parentA.value + parentB.value}
