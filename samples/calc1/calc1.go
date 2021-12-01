@@ -116,7 +116,7 @@ func (fg *FitnessGenerator) Generate() ga.Fitness {
 		a := getVal(r)
 		b := getVal(r)
 		c := getVal(r)
-		expected := float32(a + c)
+		expected := float32((a + c) * b)
 		vm.PokeMem(0, a)
 		vm.PokeMem(1, b)
 		vm.PokeMem(2, c)
@@ -129,7 +129,7 @@ func (fg *FitnessGenerator) Generate() ga.Fitness {
 			switch {
 			//case l < 6:
 			//	modifier += 1.0
-			case l < 8:
+			case l < 10:
 				modifier += 1.0
 			case l < 15:
 				modifier += 0.8
@@ -165,7 +165,7 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	population := ga.NewPopulationFG(NewGenerator(), 1000000, &FitnessGenerator{})
+	population := ga.NewPopulationFG(NewGenerator(), 4000000, &FitnessGenerator{})
 	needMatches := matchLevel
 
 	var bestIndividual ga.Individual
@@ -178,7 +178,7 @@ func main() {
 			fmt.Printf("\t%v\n", population.FitnessAt(i))
 		}
 		bestIndividual = population.Individual(0)
-		if population.FitnessAt(0) == 2.0 {
+		if population.FitnessAt(0) >= 0 {
 			needMatches--
 		} else {
 			needMatches = matchLevel
